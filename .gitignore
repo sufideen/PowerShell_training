@@ -1,0 +1,23 @@
+# Runtime logs and reports — never commit these
+Logs/
+*.log
+*.csv
+
+# Certificates and secrets — never commit these
+*.pfx
+*.cer
+*.p12
+*.key
+*secret*
+*credential*
+*password*
+
+# PowerShell session files
+*.psrc
+
+# VS Code settings (optional — remove if team shares settings)
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
