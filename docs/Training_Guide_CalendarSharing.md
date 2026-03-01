@@ -3,20 +3,21 @@
 
 **Script:** `Set-CalendarSharing.ps1`
 **Audience:** IT Administrators with working PowerShell knowledge
-**Learning Style Coverage:** Visual · Auditory · Kinesthetic (VAK)
+**Learning Style:** Visual · Kinesthetic
 **Production Use:** Monthly scheduled run via Windows Task Scheduler or Azure Automation
 
 ---
 
-## How to Use This Guide (VAK Framework)
+## How to Use This Guide
 
-This guide is structured for three learning styles. Work through all three for maximum retention.
+This guide uses two learning styles. Both reinforce each other — work through them together for the best results.
 
-| Symbol | Style | How to engage |
+| Symbol | Style | What it means for you |
 |---|---|---|
-| `[V]` | **Visual** | Read diagrams, tables, and flow charts. Study the code with syntax highlighting in VS Code. |
-| `[A]` | **Auditory** | Read each section aloud. Watch the linked Microsoft videos. Narrate what each code block does. |
-| `[K]` | **Kinesthetic** | Type every example yourself — do not copy-paste. Run `-WhatIf` first. Break things in a test tenant. |
+| `[V]` | **Visual** | Stop and study the diagram or table before moving on. Let the picture do the explaining. |
+| `[K]` | **Hands-On** | Close the guide, open your terminal, and type it yourself. Muscle memory matters more than reading about it. |
+
+> **Human note:** There is no shortcut for the hands-on sections. The exercises are short by design — each one takes under five minutes. Do them as you go, not later.
 
 ---
 
@@ -41,27 +42,26 @@ This guide is structured for three learning styles. Work through all three for m
 
 ### What problem does this script solve?
 
-Your organisation needs all employee calendars to be visible to colleagues at a defined permission level (e.g. `LimitedDetails`) — but the CEO and named executives must be explicitly excluded for privacy and governance reasons.
+Your organisation needs all employee calendars visible to colleagues at a defined permission level — but the CEO and named executives must be excluded for privacy and governance reasons.
 
 Doing this manually in the Microsoft 365 admin portal:
 - Does not scale (hundreds or thousands of mailboxes)
-- Has no audit trail
+- Leaves no audit trail
 - Cannot easily be repeated monthly as new staff join
 
-PowerShell with the **ExchangeOnlineManagement** module solves all three problems.
+PowerShell with the **ExchangeOnlineManagement** module solves all three problems cleanly.
 
-### `[A]` Auditory anchor
+### The one-line summary of what this script does
 
-Say this aloud:
-> *"The script connects to Exchange Online, gets every user mailbox, skips the executives, sets the calendar permission, checks it applied, logs everything, and tells me what happened."*
+> Connect to Exchange Online → get every mailbox → skip the executives → set the calendar permission → confirm it applied → log everything → report the result.
 
-That one sentence is the entire script. Every section you read below is one of those steps in detail.
+Every section in this guide is one of those steps in detail. Keep that sentence in your head as you work through the script.
 
 ---
 
 ## 2. Architecture Overview — Visual Map
 
-### `[V]` Flow Diagram
+### `[V]` What the script does from start to finish
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -96,7 +96,7 @@ That one sentence is the entire script. Every section you read below is one of t
           └───────────────────────────────┘
 ```
 
-### `[V]` Data flow for a single mailbox
+### `[V]` Decision path for a single mailbox
 
 ```
 Get-Mailbox ──► [Is UPN in $ExcludedSet?]
@@ -120,13 +120,13 @@ Get-Mailbox ──► [Is UPN in $ExcludedSet?]
 
 ## 3. Prerequisites & Environment Setup
 
-### `[K]` Do these steps yourself — type every command
+### `[K]` Type each of these commands yourself before going any further
 
-#### Step 1 — Verify PowerShell version
+#### Step 1 — Check your PowerShell version
 
 ```powershell
 $PSVersionTable.PSVersion
-# You need: Major version 5 (Windows) or 7+ (cross-platform)
+# You need Major version 5 (Windows) or 7+ (cross-platform)
 ```
 
 #### Step 2 — Install or update the Exchange Online module
@@ -135,143 +135,159 @@ $PSVersionTable.PSVersion
 # Check if already installed
 Get-Module -ListAvailable -Name ExchangeOnlineManagement
 
-# Install (if missing)
+# Install if missing
 Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force
 
-# Update to latest (run periodically)
+# Keep it current — run this periodically
 Update-Module -Name ExchangeOnlineManagement
 ```
 
 > **Current latest version:** 3.9.0 (as of early 2026)
 > Source: [PowerShell Gallery — ExchangeOnlineManagement](https://www.powershellgallery.com/packages/ExchangeOnlineManagement)
 
-#### Step 3 — Set execution policy for your session
+#### Step 3 — Allow scripts to run in your session
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 
-#### Step 4 — Confirm your admin role
+#### Step 4 — Confirm you have the right admin role
 
 You need one of these Microsoft Entra roles:
-- **Exchange Administrator** (preferred — least privilege)
-- **Global Administrator** (emergency only — avoid for routine scripts)
+- **Exchange Administrator** — preferred, least privilege
+- **Global Administrator** — for emergencies only, avoid for routine automation
 
-Check your role:
-```powershell
-Connect-ExchangeOnline
-Get-ManagementRoleAssignment -RoleAssignee (Get-Mailbox -ResultSize 1 | Select -Exp UserPrincipalName)
-```
+Check your assigned roles in the M365 Admin Portal under **Roles → Role assignments**.
 
-### `[V]` Prerequisites summary table
+### `[V]` Everything you need at a glance
 
-| Requirement | Minimum | Check command |
+| Requirement | Minimum | How to check |
 |---|---|---|
 | PowerShell | 5.1 or 7+ | `$PSVersionTable.PSVersion` |
 | ExchangeOnlineManagement | 3.x | `Get-Module ExchangeOnlineManagement -ListAvailable` |
-| Admin Role | Exchange Admin | M365 Admin Portal → Roles |
-| Network | HTTPS 443 outbound | `Test-NetConnection outlook.office365.com -Port 443` |
+| Admin Role | Exchange Administrator | M365 Admin Portal → Roles |
+| Network | HTTPS port 443 outbound | `Test-NetConnection outlook.office365.com -Port 443` |
 | Execution Policy | RemoteSigned | `Get-ExecutionPolicy -Scope CurrentUser` |
 
 ---
 
 ## 4. Key Concepts Explained
 
-### `[A]` Read each concept aloud and explain it to an imaginary colleague
+### 4.1 `[V]` Mailbox Folder Permissions vs Sharing Policies
 
-#### 4.1 Mailbox Folder Permissions vs Sharing Policies
-
-These are two separate Exchange mechanisms. The script uses **Mailbox Folder Permissions**.
+There are three distinct Exchange sharing mechanisms. This script uses **Mailbox Folder Permissions** — the one that controls internal access to a specific folder inside a mailbox.
 
 | Mechanism | Scope | Used for |
 |---|---|---|
-| `MailboxFolderPermission` | Per-folder, per-user | Internal org calendar access |
+| `MailboxFolderPermission` | Per-folder inside a mailbox | Internal org calendar access — **this script** |
 | `SharingPolicy` | Organisation-wide rule | External domain sharing |
 | `OrganizationRelationship` | Federated tenants | Cross-company free/busy |
 
-This script targets `:\Calendar` using `Add/Set-MailboxFolderPermission`.
+The script targets the `:\Calendar` folder using `Add-MailboxFolderPermission` and `Set-MailboxFolderPermission`.
 
-#### 4.2 Permission Levels — what each one exposes
+---
 
-| AccessRights value | What the accessor can see |
+### 4.2 `[V]` Permission levels — what each one reveals
+
+Choose the level that matches your organisation's need. The default in this script is `LimitedDetails`.
+
+| AccessRights value | What a colleague can see |
 |---|---|
-| `AvailabilityOnly` | Free/Busy time only (no details) |
-| `LimitedDetails` | Free/Busy + subject + location |
-| `Reviewer` | Full read of all calendar items |
-| `Author` | Read + create own items |
-| `Editor` | Read + create + modify all items |
+| `AvailabilityOnly` | Busy / Free blocks only — no titles, no locations |
+| `LimitedDetails` | Busy / Free + meeting subject + location ← **default** |
+| `Reviewer` | Full read access to all calendar items |
+| `Author` | Read, plus create their own items in the calendar |
+| `Editor` | Read, create, and modify all items |
 | `PublishingEditor` | Full control including subfolders |
 
-> Default in this script: **`LimitedDetails`** — the least-privilege option that still provides useful scheduling context.
+> `LimitedDetails` is the recommended starting point — it gives colleagues enough to schedule around someone without exposing private meeting details.
 
-#### 4.3 The `Default` accessor identity
+---
 
-In `Add-MailboxFolderPermission -User Default`, the word `Default` is a special Exchange token meaning *"all authenticated users in the organisation"*. It is not a user account. It is the baseline permission row that appears on every calendar.
+### 4.3 What `Default` means as an accessor identity
 
-#### 4.4 `Add` vs `Set` — why both cmdlets exist
+When the script sets `-User Default`, the word `Default` is not an actual user account. It is a built-in Exchange token that means **every authenticated person in the organisation**. It is the baseline permission row that already exists on every calendar — the script either updates it or adds it if it has been removed.
 
-```powershell
-# Add-MailboxFolderPermission  ── creates a NEW permission row
-# Set-MailboxFolderPermission  ── modifies an EXISTING permission row
-# If you call Add on a row that already exists: ERROR
-# If you call Set on a row that does not exist: ERROR
-# Solution: check first with Get-, then branch
+---
+
+### 4.4 `[V]` Why two cmdlets exist: `Add` vs `Set`
+
+A common source of confusion and errors. Here is the rule:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Permission row for "Default" already exists?           │
+│                                                         │
+│       YES                         NO                    │
+│        │                           │                    │
+│        ▼                           ▼                    │
+│  Set-MailboxFolderPermission  Add-MailboxFolderPermission│
+│  (modify the existing row)    (create a new row)        │
+│                                                         │
+│  Calling Add when row exists → ERROR                    │
+│  Calling Set when row is missing → ERROR                │
+└─────────────────────────────────────────────────────────┘
 ```
 
-The script handles this automatically:
+The script handles this automatically by checking with `Get-MailboxFolderPermission` first:
+
 ```powershell
-$existing = Get-MailboxFolderPermission -Identity $CalendarPath -User $AccessorIdentity -ErrorAction SilentlyContinue
+$existing = Get-MailboxFolderPermission -Identity $CalendarPath `
+                -User $AccessorIdentity -ErrorAction SilentlyContinue
 if ($existing) { Set-MailboxFolderPermission ... }
 else           { Add-MailboxFolderPermission ... }
 ```
 
-#### 4.5 Modern Auth and App-Only (CBA) for scheduled runs
+---
 
-Interactive login (`Connect-ExchangeOnline` with no parameters) works for manual runs. For **monthly scheduled tasks**, interactive login fails because there is no logged-in user.
+### 4.5 Interactive login vs Certificate-Based Authentication (CBA)
 
-The production-safe approach is **Certificate-Based Authentication (CBA)**:
+Interactive login (`Connect-ExchangeOnline` with no extra parameters) opens a browser window for MFA. That works fine for manual runs.
+
+For **monthly scheduled tasks**, there is no logged-in user and no browser session. The script will hang waiting for a prompt that never comes. The solution is **Certificate-Based Authentication (CBA)** — the certificate replaces the human in the login process.
 
 ```powershell
+# Scheduled / unattended connection using CBA
 Connect-ExchangeOnline `
     -CertificateThumbPrint "YOURCERTTHUMBPRINT" `
     -AppID                 "your-app-id-guid" `
     -Organization          "contoso.onmicrosoft.com"
 ```
 
-See [Section 8](#8-scheduling-for-monthly-production-use) for the complete setup.
+The full setup for CBA is in [Section 8](#8-scheduling-for-monthly-production-use).
 
 ---
 
 ## 5. Script Walkthrough — Section by Section
 
-### `[K]` Open `Set-CalendarSharing.ps1` in VS Code alongside this guide
+### `[K]` Open the script in VS Code alongside this guide
 
-```
-code Set-CalendarSharing.ps1
+```powershell
+code scripts/Set-CalendarSharing.ps1
 ```
 
-Work through each region tag in the script as you read below.
+Work through each `#region` block in the script as you read each section below. The region names match the headings here.
 
 ---
 
-### 5.1 `#region CONFIGURATION` — The control panel
+### 5.1 `#region CONFIGURATION` — The only block you need to edit
 
 ```powershell
 $ExcludedUsers = @(
     "ceo@contoso.com",
     "cfo@contoso.com"
 )
-$SharingPermission    = "LimitedDetails"
-$AccessorIdentity     = "Default"
+$SharingPermission = "LimitedDetails"
+$AccessorIdentity  = "Default"
 ```
 
-**Why it matters:** This is the only block you need to edit for a new deployment. All business logic lives here — separation of configuration from code is a production best practice.
+All organisation-specific settings live here. The rest of the script reads from these variables. This separation means you can update the exclusion list or change the permission level without touching any logic.
 
-**`[K]` Exercise:** Add three more exec UPNs to `$ExcludedUsers`. Save and run `-WhatIf`. Confirm the new exclusions appear in the log.
+**`[K]` Exercise:** Add three fictional exec UPNs to `$ExcludedUsers`. Save the file and run `-WhatIf`. Open the log and confirm each one appears as `EXCLUDED`.
 
 ---
 
-### 5.2 `#region LOGGING SETUP` — Timestamped, structured logs
+### 5.2 `#region LOGGING SETUP` — Every action leaves a trail
 
 ```powershell
 $LogFile = Join-Path $LogPath "CalendarSharing_$Timestamp.log"
@@ -280,28 +296,27 @@ function Write-Log {
     param ([string]$Message, [string]$Level = "INFO")
     $entry = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
     Add-Content -Path $LogFile -Value $entry
-    # Also writes colour-coded output to the console
 }
 ```
 
-**Key technique:** `Add-Content` appends a single line atomically. It is safer than `Out-File` when multiple processes could write to the same file.
+`Add-Content` writes one line at a time without overwriting. It is safer than `Out-File` if the log is ever opened in another process simultaneously.
 
-**`[V]` Log level colour map:**
+### `[V]` What each log level means
 
-| Level | Console colour | Meaning |
+| Level | Console colour | When it appears |
 |---|---|---|
-| `INFO` | White | Normal progress |
-| `SUCCESS` | Green | Action confirmed |
-| `WARN` | Yellow | Non-fatal issue, needs review |
-| `ERROR` | Red | Action failed |
-| `WHATIF` | Cyan | Simulation output |
+| `INFO` | White | Normal progress — connections, counts, transitions |
+| `SUCCESS` | Green | An action completed and was confirmed |
+| `WARN` | Yellow | Something unexpected but non-fatal — needs a human to check |
+| `ERROR` | Red | An action failed for a specific mailbox |
+| `WHATIF` | Cyan | Simulation output — no real changes made |
 
 ---
 
-### 5.3 `#region GUARDRAILS` — The safety net
+### 5.3 `#region GUARDRAILS` — The script's safety net
 
 ```powershell
-$ErrorActionPreference = "Stop"   # All errors become terminating
+$ErrorActionPreference = "Stop"   # Converts non-terminating errors into terminating ones
 
 trap {
     Write-Log "FATAL: $($_.Exception.Message)" "ERROR"
@@ -311,18 +326,17 @@ trap {
 }
 ```
 
-**`[A]` Say aloud:** *"`trap` is the script's emergency brake. If anything unexpected happens — a network drop, an API timeout, a null reference — `trap` runs, writes the error, emails the admin, disconnects cleanly, and exits with code 1 so the scheduler knows it failed."*
+`trap` is the last line of defence. If anything unexpected crashes the script — a network drop mid-run, an API timeout, a null reference — `trap` catches it, writes the error to the log, emails the admin, disconnects from Exchange cleanly, and exits with code `1`.
 
-**Why `exit 1`?** Windows Task Scheduler and Azure Automation both check the process exit code. Exit code `0` = success. Any non-zero = failure. This triggers alerts in your monitoring system.
+**Why `exit 1`?** Windows Task Scheduler and Azure Automation both read the process exit code after a run. `0` means success. Anything else means failure. A non-zero exit code is what triggers your monitoring alerts.
 
 ---
 
-### 5.4 `#region GET MAILBOXES` — Partition logic
+### 5.4 `#region GET MAILBOXES` — Pulling and partitioning the list
 
 ```powershell
 $AllMailboxes = Get-Mailbox -RecipientTypeDetails UserMailbox -ResultSize Unlimited
 
-# Normalize to lowercase for reliable string comparison
 $ExcludedSet = $ExcludedUsers | ForEach-Object { $_.ToLower().Trim() }
 
 $TargetMailboxes = $AllMailboxes | Where-Object {
@@ -331,17 +345,19 @@ $TargetMailboxes = $AllMailboxes | Where-Object {
 }
 ```
 
-**Why `-ResultSize Unlimited`?** The default `Get-Mailbox` returns only 1,000 results. In any organisation with more than 1,000 mailboxes this would silently miss users. Always use `Unlimited` in production.
+**Why `-ResultSize Unlimited`?** Without it, `Get-Mailbox` silently caps results at 1,000. In any organisation larger than that, users would be missed with no warning. Always use `Unlimited` in production.
 
-**Why check both `PrimarySmtpAddress` AND `UserPrincipalName`?** In some tenants these differ (e.g. a UPN of `jsmith@corp.onmicrosoft.com` vs SMTP of `j.smith@corp.com`). Checking both prevents accidental exclusion failures.
+**Why check both `PrimarySmtpAddress` and `UserPrincipalName`?** In some tenants these are different. For example, a UPN of `jsmith@corp.onmicrosoft.com` paired with an SMTP address of `j.smith@corp.com`. Checking both ensures no exec slips through an exclusion list match failure.
 
-**`[K]` Exercise:** Run this in a test tenant:
+**`[K]` Exercise:** Export your mailbox list to CSV and inspect it:
+
 ```powershell
 Get-Mailbox -RecipientTypeDetails UserMailbox -ResultSize Unlimited |
     Select-Object DisplayName, PrimarySmtpAddress, UserPrincipalName |
     Export-Csv "$env:TEMP\mailboxes.csv" -NoTypeInformation
 ```
-Open the CSV. Find any rows where PrimarySmtpAddress ≠ UserPrincipalName.
+
+Open the file. Find any rows where `PrimarySmtpAddress` and `UserPrincipalName` differ — those are exactly the accounts where dual-checking matters.
 
 ---
 
@@ -350,35 +366,38 @@ Open the CSV. Find any rows where PrimarySmtpAddress ≠ UserPrincipalName.
 ```powershell
 foreach ($Mailbox in $TargetMailboxes) {
     $CalendarPath = "$($Mailbox.PrimarySmtpAddress):\Calendar"
-    $existing = Get-MailboxFolderPermission -Identity $CalendarPath -User $AccessorIdentity -ErrorAction SilentlyContinue
+    $existing = Get-MailboxFolderPermission -Identity $CalendarPath `
+                    -User $AccessorIdentity -ErrorAction SilentlyContinue
 
     if ($WhatIfMode) {
         Write-Log "[WhatIf] Would process $CalendarPath" "WHATIF"
     }
     elseif ($existing) {
-        Set-MailboxFolderPermission -Identity $CalendarPath -User $AccessorIdentity -AccessRights $SharingPermission
+        Set-MailboxFolderPermission -Identity $CalendarPath `
+            -User $AccessorIdentity -AccessRights $SharingPermission
     }
     else {
-        Add-MailboxFolderPermission -Identity $CalendarPath -User $AccessorIdentity -AccessRights $SharingPermission
+        Add-MailboxFolderPermission -Identity $CalendarPath `
+            -User $AccessorIdentity -AccessRights $SharingPermission
     }
 }
 ```
 
-**`[V]` The `:\Calendar` path format**
+### `[V]` The calendar path format
 
 ```
 user@contoso.com:\Calendar
 │                 │
-└─ Mailbox ID     └─ Folder path (backslash-separated like a filesystem)
+└─ Mailbox ID     └─ Folder path  (backslash-separated, like a file system)
+
+Subfolders:  user@contoso.com:\Calendar\Work
 ```
 
-Subfolders use: `user@contoso.com:\Calendar\Work`
-
-**`[A]` Explain this loop aloud** before running it live. Cover: what happens if `Get-MailboxFolderPermission` returns `$null`, what `-ErrorAction SilentlyContinue` does, and why the loop continues even if one mailbox fails (the `try/catch` inside the loop catches per-mailbox errors without halting the whole script).
+**Why does a per-mailbox failure not stop the whole script?** Each mailbox is inside a `try/catch`. If one mailbox errors, the error is logged and the loop moves on to the next. You get results for 999 mailboxes even if one fails.
 
 ---
 
-### 5.6 `#region VERIFICATION` — Trust but verify
+### 5.6 `#region VERIFICATION` — Confirming what was set
 
 ```powershell
 $perm = Get-MailboxFolderPermission -Identity $CalendarPath -User $AccessorIdentity
@@ -390,84 +409,85 @@ else {
 }
 ```
 
-**Why verify?** Exchange Online is eventually consistent. In rare cases a `Set-` call returns success but the change propagates with a short delay. Re-reading confirms the state the system recorded.
+Exchange Online is eventually consistent. In rare cases a write call returns success, but the value has not fully propagated when immediately re-read. This verification pass re-reads each permission after setting it and flags any mismatch as a `WARN`. It does not abort the script — it gives you a review item.
 
 ---
 
 ## 6. Running the Script — Step-by-Step
 
-### `[K]` Hands-on execution sequence
-
-Always follow this order — never skip to step 3:
+### `[K]` Always follow this sequence — never skip to step 4
 
 ```
-Step 1: Edit $ExcludedUsers in the configuration block
-Step 2: Run -WhatIf simulation (see Section 7)
-Step 3: Review the WhatIf log in Logs\
-Step 4: Run live against a single test mailbox (see below)
-Step 5: Run live against all mailboxes
-Step 6: Review the CSV report
+Step 1  Edit $ExcludedUsers and confirm your permission level
+Step 2  Run -WhatIf simulation
+Step 3  Review the WhatIf log in the Logs\ folder
+Step 4  Run live against one test mailbox
+Step 5  Run live against all mailboxes
+Step 6  Review the CSV report
 ```
 
 #### Single-mailbox test run
 
+Add this line temporarily after the partition section in the script:
+
 ```powershell
-# Override $TargetMailboxes to just one mailbox for your first live test
-# In the script, after the partition section, temporarily add:
-$TargetMailboxes = $TargetMailboxes | Where-Object { $_.PrimarySmtpAddress -eq "testuser@contoso.com" }
+$TargetMailboxes = $TargetMailboxes | Where-Object {
+    $_.PrimarySmtpAddress -eq "testuser@contoso.com"
+}
 ```
 
-Remove that line after testing.
+Run the script live. Verify the log and CSV for that one mailbox. Remove the line before the full run.
 
-#### Full production run with notification
+#### Full production run with email notification
 
 ```powershell
-.\Set-CalendarSharing.ps1 -NotifyEmail "admin@contoso.com"
+.\scripts\Set-CalendarSharing.ps1 -NotifyEmail "admin@contoso.com"
 ```
 
-#### Full run with custom permission level
+#### Full run with a different permission level
 
 ```powershell
-.\Set-CalendarSharing.ps1 -SharingPermission "AvailabilityOnly" -NotifyEmail "admin@contoso.com"
+.\scripts\Set-CalendarSharing.ps1 -SharingPermission "AvailabilityOnly" -NotifyEmail "admin@contoso.com"
 ```
 
 ---
 
 ## 7. Simulation with -WhatIf
 
-### `[A]` What `-WhatIf` actually does — say this aloud
+### What `-WhatIf` actually does
 
-> *"WhatIf is a contract. When a cmdlet supports `SupportsShouldProcess`, passing `-WhatIf` tells every supporting operation inside: report what you would do, then stop without doing it. Our script uses `[CmdletBinding(SupportsShouldProcess)]` so the entire script honours this contract."*
+`-WhatIf` is a built-in PowerShell contract. When the script is declared with `[CmdletBinding(SupportsShouldProcess)]`, passing `-WhatIf` tells every operation inside: report what you would do, then stop. Nothing is written to Exchange Online.
 
-### `[K]` Run simulation now
+### `[K]` Run the simulation now
 
 ```powershell
-.\Set-CalendarSharing.ps1 -WhatIf
+.\scripts\Set-CalendarSharing.ps1 -WhatIf
 ```
 
-**Expect to see in the console and log:**
+### `[V]` What a clean simulation output looks like
+
 ```
-[2026-01-15 09:00:01] [WHATIF] *** SIMULATION MODE (WhatIf) — No changes will be applied ***
-[2026-01-15 09:00:03] [INFO]   Total mailboxes retrieved: 347
-[2026-01-15 09:00:03] [INFO]   Mailboxes to be processed: 343
-[2026-01-15 09:00:03] [INFO]   EXCLUDED: Jane Smith <ceo@contoso.com>
-[2026-01-15 09:00:04] [WHATIF] Would ADD calendar permission 'LimitedDetails' for Alice Brown <abrown@contoso.com>
-[2026-01-15 09:00:04] [WHATIF] Would UPDATE calendar permission 'LimitedDetails' for Bob Jones <bjones@contoso.com>
+[2026-01-15 09:00:01] [WHATIF]  *** SIMULATION MODE (WhatIf) — No changes will be applied ***
+[2026-01-15 09:00:03] [INFO]    Total mailboxes retrieved: 347
+[2026-01-15 09:00:03] [INFO]    Mailboxes to be processed: 343
+[2026-01-15 09:00:03] [INFO]    EXCLUDED: Jane Smith <ceo@contoso.com>
+[2026-01-15 09:00:04] [WHATIF]  Would ADD permission 'LimitedDetails' for Alice Brown <abrown@contoso.com>
+[2026-01-15 09:00:04] [WHATIF]  Would UPDATE permission 'LimitedDetails' for Bob Jones <bjones@contoso.com>
 ```
 
-**`[V]` WhatIf checklist — review the log before going live:**
+### `[V]` Pre-flight checklist — work through this before every live run
 
-- [ ] Total mailbox count looks correct
-- [ ] All exec names appear in EXCLUDED lines
-- [ ] No exec names appear in WhatIf action lines
-- [ ] ADD vs UPDATE distribution is what you expected
-- [ ] No unexpected `WARN` entries
+- [ ] Total mailbox count looks right
+- [ ] Every exec name appears in an `EXCLUDED` line
+- [ ] No exec name appears in a `WhatIf` action line
+- [ ] The mix of `ADD` vs `UPDATE` actions makes sense for your org
+- [ ] No unexpected `WARN` lines
 
 ---
 
 ## 8. Scheduling for Monthly Production Use
 
-### `[V]` Two options — choose based on your environment
+### `[V]` Two paths — pick the one that fits your environment
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -476,30 +496,32 @@ Remove that line after testing.
 │  Windows Task         │  Azure Automation Runbook           │
 │  Scheduler            │                                     │
 ├───────────────────────┼─────────────────────────────────────┤
-│  On-premise server    │  Cloud-native, no server needed     │
-│  Must be always on    │  Serverless, runs on demand         │
-│  CBA cert in store    │  Managed Identity (best practice)   │
-│  Log files local      │  Job history in Azure portal        │
-│  Free                 │  Costs Azure Automation credits     │
+│  Runs on a local      │  Cloud-native, no server required   │
+│  server               │                                     │
+│  Server must be on    │  Serverless — runs on demand        │
+│  CBA cert in cert     │  Managed Identity (recommended)     │
+│  store                │                                     │
+│  Logs stored locally  │  Job history in Azure portal        │
+│  No extra cost        │  Uses Azure Automation credits      │
 └───────────────────────┴─────────────────────────────────────┘
 ```
 
 ---
 
-### Option A — Windows Task Scheduler (on-premise server)
+### Option A — Windows Task Scheduler
 
-#### `[A]` Why interactive login breaks in Task Scheduler
+#### Why interactive login does not work in Task Scheduler
 
-> *"When Task Scheduler runs a script with 'Run whether user is logged on or not', there is no user session. No session means no browser for MFA, no token cache, no interactive prompt. The script hangs or fails. Certificate-based authentication removes the human from the login — the certificate IS the credential."*
+When Task Scheduler runs a script with **"Run whether user is logged on or not"** enabled, there is no user session — no browser, no MFA prompt, no token cache. The script will hang or fail. Certificate-based authentication (CBA) solves this by replacing the human login with a certificate stored on the server.
 
 #### Step 1 — Register an app in Microsoft Entra ID
 
-1. Go to **Microsoft Entra admin center** → App registrations → New registration
-2. Name: `CalendarSharingAutomation`
+1. Open **Microsoft Entra admin center** → App registrations → New registration
+2. Name it `CalendarSharingAutomation`
 3. Note the **Application (client) ID** and **Directory (tenant) ID**
-4. Under **API permissions** → Add → `Exchange.ManageAsApp` (application permission)
-5. Grant admin consent
-6. Assign the app the **Exchange Administrator** role in Entra → Roles and administrators
+4. Under **API permissions** → Add a permission → `Exchange.ManageAsApp` (application permission)
+5. Click **Grant admin consent**
+6. Go to **Roles and administrators** → assign the app the **Exchange Administrator** role
 
 Official reference: [App-only authentication in Exchange Online PowerShell](https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2?view=exchange-ps)
 
@@ -508,22 +530,22 @@ Official reference: [App-only authentication in Exchange Online PowerShell](http
 ```powershell
 # Generate a self-signed certificate (valid 2 years)
 $cert = New-SelfSignedCertificate `
-    -Subject       "CN=ExchangeCalendarAutomation" `
-    -CertStoreLocation "Cert:\LocalMachine\My" `
-    -KeyExportPolicy Exportable `
-    -KeySpec Signature `
-    -KeyLength 2048 `
-    -HashAlgorithm SHA256 `
-    -NotAfter (Get-Date).AddYears(2)
+    -Subject            "CN=ExchangeCalendarAutomation" `
+    -CertStoreLocation  "Cert:\LocalMachine\My" `
+    -KeyExportPolicy    Exportable `
+    -KeySpec            Signature `
+    -KeyLength          2048 `
+    -HashAlgorithm      SHA256 `
+    -NotAfter           (Get-Date).AddYears(2)
 
-# Note the thumbprint
+# Record the thumbprint — you will need it in the script
 $cert.Thumbprint
 
 # Export the public key (.cer) to upload to Entra
 Export-Certificate -Cert $cert -FilePath "C:\Certs\CalendarAutomation.cer"
 ```
 
-Upload the `.cer` file to your Entra app registration under **Certificates & secrets → Certificates**.
+Upload the `.cer` file in your Entra app registration under **Certificates & secrets → Certificates**.
 
 #### Step 3 — Update the script connection block for CBA
 
@@ -537,14 +559,14 @@ Connect-ExchangeOnline `
     -ShowBanner:$false
 ```
 
-#### Step 4 — Create the scheduled task via PowerShell
+#### Step 4 — Register the scheduled task
 
 ```powershell
 $action = New-ScheduledTaskAction `
     -Execute  "pwsh.exe" `
     -Argument "-NonInteractive -NoProfile -ExecutionPolicy RemoteSigned -File `"C:\Scripts\Set-CalendarSharing.ps1`" -NotifyEmail admin@contoso.com"
 
-# Run on the 1st of every month at 02:00 AM
+# Runs on the 1st of every month at 02:00 AM
 $trigger = New-ScheduledTaskTrigger -Monthly -DaysOfMonth 1 -At "02:00"
 
 $principal = New-ScheduledTaskPrincipal `
@@ -553,39 +575,40 @@ $principal = New-ScheduledTaskPrincipal `
     -RunLevel  Highest
 
 $settings = New-ScheduledTaskSettingsSet `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
-    -RestartCount 1 `
-    -RestartInterval (New-TimeSpan -Minutes 30)
+    -ExecutionTimeLimit  (New-TimeSpan -Hours 2) `
+    -RestartCount        1 `
+    -RestartInterval     (New-TimeSpan -Minutes 30)
 
 Register-ScheduledTask `
-    -TaskName  "Monthly-CalendarSharing" `
-    -TaskPath  "\IT-Automation\" `
-    -Action    $action `
-    -Trigger   $trigger `
-    -Principal $principal `
-    -Settings  $settings `
-    -Description "Sets org-wide calendar sharing permissions, excludes executives. Runs 1st of month."
+    -TaskName    "Monthly-CalendarSharing" `
+    -TaskPath    "\IT-Automation\" `
+    -Action      $action `
+    -Trigger     $trigger `
+    -Principal   $principal `
+    -Settings    $settings `
+    -Description "Sets org-wide calendar sharing, excludes executives. Runs 1st of each month."
 ```
 
-Official cmdlet reference:
+Official cmdlet references:
 - [`New-ScheduledTask`](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtask?view=windowsserver2025-ps)
 - [`New-ScheduledTaskTrigger`](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasktrigger?view=windowsserver2025-ps)
 - [`Register-ScheduledTask`](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/register-scheduledtask?view=windowsserver2025-ps)
 
-#### `[K]` Verify the task registered correctly
+#### `[K]` Confirm the task was registered correctly
 
 ```powershell
-Get-ScheduledTask -TaskPath "\IT-Automation\" | Select-Object TaskName, State, LastRunTime, LastTaskResult
+Get-ScheduledTask -TaskPath "\IT-Automation\" |
+    Select-Object TaskName, State, LastRunTime, LastTaskResult
 ```
 
-`LastTaskResult = 0` means the last run succeeded.
+`LastTaskResult = 0` means the last run succeeded. Any other value means it failed — check the log file.
 
 ---
 
 ### Option B — Azure Automation (cloud-native)
 
 ```powershell
-# In your Runbook, use Managed Identity instead of CBA
+# In your Runbook, authenticate with Managed Identity — no certificate needed
 Connect-ExchangeOnline -ManagedIdentity -Organization "contoso.onmicrosoft.com"
 ```
 
@@ -595,67 +618,73 @@ Official reference: [Connect using managed identity](https://learn.microsoft.com
 
 ## 9. Guardrails & Failure Handling
 
-### `[V]` Failure decision tree
+### `[V]` What happens when things go wrong
 
 ```
 Script starts
       │
       ▼
-Module installed? ──NO──► Auto-install ──FAIL──► Email + exit 1
+Module installed? ──NO──► Auto-install ──FAIL──► Email admin + exit 1
       │ YES
       ▼
-Connect-ExchangeOnline ──FAIL──► Email + exit 1
+Connect-ExchangeOnline ──FAIL──► Email admin + exit 1
       │ OK
       ▼
-Get-Mailbox ──FAIL──► Email + exit 1
+Get-Mailbox ──FAIL──► Email admin + exit 1
       │ OK
       ▼
 Per-mailbox loop
-  └── Each mailbox: try/catch
-         SUCCESS ──► Log SUCCESS, add to results
-         FAIL    ──► Log ERROR, continue to next mailbox
+  └── Each mailbox has its own try/catch
+         SUCCESS ──► Log SUCCESS
+         FAIL    ──► Log ERROR, move to next mailbox (loop continues)
       │
       ▼
-Unexpected crash ──► trap{} ──► Log FATAL, email, Disconnect, exit 1
+Unexpected crash ──► trap{} catches it
+                         │
+                         ▼
+                   Log FATAL + Email admin + Disconnect + exit 1
       │
       ▼
-Verification pass ──► MISMATCH? Log WARN (does not abort)
+Verification pass ──► MISMATCH logged as WARN (does not abort)
       │
       ▼
-Email summary ──► Subject: SUCCESS / WARNING / SIMULATION
+Email summary sent ──► Subject reflects SUCCESS / WARNING / SIMULATION
 ```
 
-### `[A]` Guardrail principles — say each one aloud
+### The four guardrail principles built into this script
 
-1. **Fail fast on infrastructure failures** — if Exchange Online is unreachable, stop immediately. There is no point looping 1,000 mailboxes against a dead connection.
+**1. Fail fast on infrastructure problems.**
+If Exchange Online is unreachable, the script stops immediately. There is no value in attempting 1,000 mailbox updates against a dead connection.
 
-2. **Fail slow on per-item failures** — if one mailbox errors, log it and move on. You want the other 999 to succeed.
+**2. Fail slow on individual mailbox failures.**
+If one mailbox errors, the script logs it and continues to the next. A bad mailbox should not prevent the other 999 from being processed.
 
-3. **Always disconnect** — the `trap` block and the final disconnect both call `Disconnect-ExchangeOnline`. Leaving sessions open consumes your tenant's concurrent session quota.
+**3. Always disconnect, even on crash.**
+Both the `trap` block and the end of the script call `Disconnect-ExchangeOnline`. Open sessions count against your tenant's concurrent session limit.
 
-4. **Exit codes are signals** — `exit 1` tells the scheduler the job failed. Configure your scheduler to email or alert on non-zero exit codes.
+**4. Exit codes are signals.**
+`exit 1` tells the scheduler the job failed. Set up your monitoring to alert on non-zero exit codes from this task.
 
-### `[K]` Test the guardrail
+### `[K]` Test that the guardrail actually works
 
-Temporarily break the script to confirm `trap` fires:
+Temporarily add this line immediately after the logging setup region:
 
 ```powershell
-# Add this line temporarily after the logging setup region:
 throw "Deliberate test error"
 ```
 
-Run the script. Confirm:
-- [ ] `FATAL` entry appears in the log
-- [ ] Email sent to `$NotifyEmail` (if configured)
-- [ ] Script exits and does not process any mailboxes
+Run the script. Then verify:
+- [ ] The log contains a `FATAL` entry with your error message
+- [ ] An email notification was sent (if `$NotifyEmail` is set)
+- [ ] The script exited without processing any mailboxes
 
-Remove the throw line afterwards.
+Remove the `throw` line once you have confirmed it.
 
 ---
 
 ## 10. Verification & Log Interpretation
 
-### `[V]` Reading a successful run log
+### `[V]` A clean successful run looks like this
 
 ```
 [2026-01-01 02:00:01] [INFO]    ===== Calendar Sharing Script Started =====
@@ -666,7 +695,7 @@ Remove the throw line afterwards.
 [2026-01-01 02:00:05] [INFO]      EXCLUDED: Jane Smith <ceo@contoso.com>
 [2026-01-01 02:01:44] [SUCCESS]   UPDATED: Alice Brown <abrown@contoso.com>
 [2026-01-01 02:01:44] [SUCCESS]   ADDED:   Bob Jones <bjones@contoso.com>
-[2026-01-01 02:03:10] [SUCCESS] Verification complete — all checked permissions confirmed.
+[2026-01-01 02:03:10] [SUCCESS] Verification complete — all permissions confirmed.
 [2026-01-01 02:03:11] [SUCCESS] EXCLUSION OK: Jane Smith — Not modified by this script.
 [2026-01-01 02:03:12] [INFO]    CSV report saved: Logs\CalendarSharing_Report_20260101_020001.csv
 [2026-01-01 02:03:12] [INFO]    ===== SUMMARY: Processed 407, Succeeded 407, Failed 0 =====
@@ -674,56 +703,61 @@ Remove the throw line afterwards.
 [2026-01-01 02:03:13] [INFO]    ===== Script Completed =====
 ```
 
-### `[V]` Reading the CSV report
+### `[V]` Reading the CSV report in Excel
 
-Open `CalendarSharing_Report_*.csv` in Excel. Key columns:
+Open `Logs\CalendarSharing_Report_*.csv`. These are the columns that matter:
 
-| Column | What to look for |
-|---|---|
-| `Status` | All rows should be `Success`. Filter for `Error`. |
-| `Action` | Mix of `Added` (new staff) and `Updated` (returning) is normal |
-| `Error` | For failed rows — paste error text into Microsoft Learn search |
+| Column | What a healthy run shows | What to investigate |
+|---|---|---|
+| `Status` | All rows say `Success` | Any row showing `Error` |
+| `Action` | Mix of `Added` (new staff) and `Updated` (existing) | Unexpected `Failed` actions |
+| `Error` | Empty for all rows | Any non-empty value — paste into Microsoft Learn search |
 
-### `[K]` Monthly review checklist
+### `[K]` Monthly post-run checklist
 
-After each scheduled run:
-- [ ] Open log — no `ERROR` or `FATAL` lines
-- [ ] Open CSV — `Status` column: all `Success`
-- [ ] Exec count matches expectation (no new execs unaccounted for)
-- [ ] `SuccessCount` + `FailCount` = `TargetMailboxes.Count`
-- [ ] Email notification received within expected time window
+After each scheduled run, work through this before closing your laptop:
+
+- [ ] Log file has no `ERROR` or `FATAL` entries
+- [ ] CSV `Status` column shows all `Success`
+- [ ] Exec exclusion count matches your expected number
+- [ ] `SuccessCount` + `FailCount` equals `TargetMailboxes.Count`
+- [ ] Email notification arrived within the expected window
 
 ---
 
 ## 11. Knowledge Check
 
-### `[A]` Answer these aloud without looking at the script
+These questions test whether you understand the script well enough to support it in production. Work through them without looking at the code first.
 
-1. What cmdlet do you run first to test a script without making changes?
-2. Why does `-ResultSize Unlimited` matter in `Get-Mailbox`?
-3. What is the difference between `Add-MailboxFolderPermission` and `Set-MailboxFolderPermission`?
-4. Why does interactive `Connect-ExchangeOnline` fail in Task Scheduler?
-5. What exit code signals failure to a scheduler, and why?
-6. If the `Get-Mailbox` call fails, should the script continue or abort? Why?
-7. What does the `Default` user identity mean in calendar permissions?
-8. Name two things the `trap {}` block does.
+### Questions
+
+1. What switch do you pass to run the script without making any changes?
+2. Why does `Get-Mailbox` need `-ResultSize Unlimited` in production?
+3. What is the practical difference between `Add-MailboxFolderPermission` and `Set-MailboxFolderPermission`? When does the script use each one?
+4. Why does interactive `Connect-ExchangeOnline` fail when run from Task Scheduler with "run when not logged on" enabled?
+5. What does `exit 1` signal, and who receives that signal?
+6. If `Get-Mailbox` fails entirely, should the script continue or abort? Why?
+7. What does `-User Default` mean in the context of a calendar permission?
+8. Name two things the `trap {}` block does when an unexpected error occurs.
 
 ### `[K]` Practical exercises
 
 **Exercise 1 — Exclusion change**
-Add a new exec `vp-sales@contoso.com` to `$ExcludedUsers`. Run `-WhatIf`. Confirm they appear in the exclusion log. Remove them and repeat.
+Add `vp-sales@contoso.com` to `$ExcludedUsers`. Run `-WhatIf`. Confirm the name appears in the simulation log under `EXCLUDED`. Remove it and run `-WhatIf` again — confirm it is gone.
 
 **Exercise 2 — Permission level comparison**
-Run the script twice with `-WhatIf`: once with `LimitedDetails`, once with `AvailabilityOnly`. Compare the WhatIf log entries — what changes?
+Run `-WhatIf` twice: once with `-SharingPermission LimitedDetails` and once with `-SharingPermission AvailabilityOnly`. Open both logs side by side. What is different?
 
 **Exercise 3 — Break and recover**
-Intentionally use a wrong `$Organization` value in the CBA connection block. Run the script. Read the error in the log. Find the correct error message in the [Microsoft Learn Connect-ExchangeOnline docs](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/connect-exchangeonline?view=exchange-ps).
+Put a deliberate typo in the `$Organization` value in the CBA connection block. Run the script. Read the error in the log. Look up the correct error message in the [Connect-ExchangeOnline docs](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/connect-exchangeonline?view=exchange-ps). Fix the typo.
 
-**Exercise 4 — Log analysis**
-Open an old CSV report. Use PowerShell to query it:
+**Exercise 4 — Query the CSV report with PowerShell**
+After a run (WhatIf or live), analyse the output:
+
 ```powershell
-$report = Import-Csv "Logs\CalendarSharing_Report_*.csv" | Select-Object -Last 1
-$report | Group-Object Status | Select-Object Name, Count
+$report = Import-Csv (Get-ChildItem "Logs\CalendarSharing_Report_*.csv" | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+$report | Group-Object Status  | Select-Object Name, Count
+$report | Group-Object Action  | Select-Object Name, Count
 $report | Where-Object { $_.Status -eq "Error" } | Select-Object DisplayName, Error
 ```
 
@@ -733,37 +767,38 @@ $report | Where-Object { $_.Status -eq "Error" } | Select-Object DisplayName, Er
 
 ### Microsoft Learn — Core documentation
 
-| Topic | URL |
+| Topic | Link |
 |---|---|
-| Exchange Online PowerShell overview | [learn.microsoft.com/exchange-online-powershell](https://learn.microsoft.com/en-us/powershell/exchange/exchange-online-powershell?view=exchange-ps) |
-| Connect-ExchangeOnline cmdlet | [learn.microsoft.com/connect-exchangeonline](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/connect-exchangeonline?view=exchange-ps) |
-| Add-MailboxFolderPermission | [learn.microsoft.com/add-mailboxfolderpermission](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/add-mailboxfolderpermission?view=exchange-ps) |
-| Set-MailboxFolderPermission | [learn.microsoft.com/set-mailboxfolderpermission](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/set-mailboxfolderpermission?view=exchange-ps) |
-| Get-MailboxFolderPermission | [learn.microsoft.com/get-mailboxfolderpermission](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/get-mailboxfolderpermission?view=exchange-ps) |
-| App-only (CBA) auth for unattended scripts | [learn.microsoft.com/app-only-auth-powershell-v2](https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2?view=exchange-ps) |
-| Apply a sharing policy to mailboxes | [learn.microsoft.com/apply-a-sharing-policy](https://learn.microsoft.com/en-us/exchange/sharing/sharing-policies/apply-a-sharing-policy) |
-| Create a sharing policy | [learn.microsoft.com/create-a-sharing-policy](https://learn.microsoft.com/en-us/exchange/sharing/sharing-policies/create-a-sharing-policy) |
-| New-ScheduledTask | [learn.microsoft.com/new-scheduledtask](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtask?view=windowsserver2025-ps) |
-| New-ScheduledTaskTrigger | [learn.microsoft.com/new-scheduledtasktrigger](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasktrigger?view=windowsserver2025-ps) |
-| Register-ScheduledTask | [learn.microsoft.com/register-scheduledtask](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/register-scheduledtask?view=windowsserver2025-ps) |
-| Manage M365 services with PowerShell (Learning Path) | [learn.microsoft.com/manage-microsoft-365-services](https://learn.microsoft.com/en-us/training/paths/manage-microsoft-365-services-use-windows-powershell/) |
-| AZ-040T00: Automate Administration with PowerShell | [learn.microsoft.com/az-040t00](https://learn.microsoft.com/en-us/training/courses/az-040t00) |
-| Get started with PowerShell for Microsoft 365 | [learn.microsoft.com/getting-started-m365-powershell](https://learn.microsoft.com/en-us/microsoft-365/enterprise/getting-started-with-microsoft-365-powershell?view=o365-worldwide) |
+| Exchange Online PowerShell overview | [exchange-online-powershell](https://learn.microsoft.com/en-us/powershell/exchange/exchange-online-powershell?view=exchange-ps) |
+| Connect-ExchangeOnline cmdlet | [connect-exchangeonline](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/connect-exchangeonline?view=exchange-ps) |
+| Add-MailboxFolderPermission | [add-mailboxfolderpermission](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/add-mailboxfolderpermission?view=exchange-ps) |
+| Set-MailboxFolderPermission | [set-mailboxfolderpermission](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/set-mailboxfolderpermission?view=exchange-ps) |
+| Get-MailboxFolderPermission | [get-mailboxfolderpermission](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/get-mailboxfolderpermission?view=exchange-ps) |
+| App-only (CBA) auth for unattended scripts | [app-only-auth-powershell-v2](https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2?view=exchange-ps) |
+| Apply a sharing policy to mailboxes | [apply-a-sharing-policy](https://learn.microsoft.com/en-us/exchange/sharing/sharing-policies/apply-a-sharing-policy) |
+| Create a sharing policy | [create-a-sharing-policy](https://learn.microsoft.com/en-us/exchange/sharing/sharing-policies/create-a-sharing-policy) |
+| New-ScheduledTask | [new-scheduledtask](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtask?view=windowsserver2025-ps) |
+| New-ScheduledTaskTrigger | [new-scheduledtasktrigger](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasktrigger?view=windowsserver2025-ps) |
+| Register-ScheduledTask | [register-scheduledtask](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/register-scheduledtask?view=windowsserver2025-ps) |
+| Manage M365 services with PowerShell (Learning Path) | [manage-microsoft-365-services](https://learn.microsoft.com/en-us/training/paths/manage-microsoft-365-services-use-windows-powershell/) |
+| AZ-040T00: Automate Administration with PowerShell | [az-040t00](https://learn.microsoft.com/en-us/training/courses/az-040t00) |
+| Get started with PowerShell for Microsoft 365 | [getting-started-m365-powershell](https://learn.microsoft.com/en-us/microsoft-365/enterprise/getting-started-with-microsoft-365-powershell?view=o365-worldwide) |
 
 ### Microsoft Learn — Video series
 
-| Video | URL |
+| Video | Link |
 |---|---|
-| Getting Started with PowerShell 3.0 (Series, Microsoft Learn Shows) | [learn.microsoft.com/shows/getstartedpowershell3](https://learn.microsoft.com/en-us/shows/getstartedpowershell3/01) |
-| PowerShell for Beginners (MVP Series, Microsoft Learn Shows) | [learn.microsoft.com/shows/powershell-beginners](https://learn.microsoft.com/en-us/shows/mvp-windows-and-devices-for-it/powershell-beginners) |
+| Getting Started with PowerShell 3.0 (Series) | [shows/getstartedpowershell3](https://learn.microsoft.com/en-us/shows/getstartedpowershell3/01) |
+| PowerShell for Beginners (MVP Series) | [shows/powershell-beginners](https://learn.microsoft.com/en-us/shows/mvp-windows-and-devices-for-it/powershell-beginners) |
 
 ### PowerShell Gallery
 
-| Package | URL |
+| Package | Link |
 |---|---|
 | ExchangeOnlineManagement (latest) | [powershellgallery.com/ExchangeOnlineManagement](https://www.powershellgallery.com/packages/ExchangeOnlineManagement) |
 
 ---
 
-*Document version 1.0 — Covers `Set-CalendarSharing.ps1` v1.0*
+*Document version 2.0 — Visual and Kinesthetic edition*
+*Covers `Set-CalendarSharing.ps1` v1.0*
 *Next review: after any ExchangeOnlineManagement module major version update*
